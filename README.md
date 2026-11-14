@@ -23,16 +23,13 @@ Set `YOUTUBE_COOKIES` (see `.env.example`) locally in `.env` and on Vercel as an
 - Link unduhan YouTube lewat `/file` dengan allow-list host (googlevideo/ytimg); proses anak (yt-dlp/ffmpeg) dijalankan tanpa shell dan tanpa rahasia aplikasi di environment-nya.
 - Jika database ditambahkan nanti: wajib prepared statement / parameter binding, jangan gabungkan string ke query.
 
-## YouTube: yt-dlp eksternal
-YouTube memakai yt-dlp saja (tanpa API pihak ketiga). **Source yt-dlp tidak ada di repository**: aplikasi memanggil executable `yt-dlp` lewat `child_process` (`src/services/ytdlp.ts`, tanpa shell).
+## YouTube: SnapYT
+YouTube diproses lewat SnapYT (`https://www.snapyt.app`) di `src/services/platforms/youtube.ts` (port dari scraper Node: nonce -> `process_video_url` -> halaman preview -> daftar format). Tanpa yt-dlp, cookies, ffmpeg, axios, maupun cheerio.
 
-Urutan pencarian executable: `YTDLP_PATH` -> `yt-dlp` di PATH -> salinan cache di folder sementara -> unduh otomatis binary resmi dari GitHub Releases ke folder sementara (diverifikasi SHA-256, matikan dengan `YTDLP_AUTO_DOWNLOAD=0`).
-
-- **Docker / VPS (disarankan)**: `docker build -t fetchio . && docker run -p 3000:3000 fetchio`. Dockerfile memasang binary resmi (sudah membawa yt-dlp-ejs) + ffmpeg. Perbarui yt-dlp dengan `docker build --no-cache`.
-- **Server biasa**: pasang yt-dlp (binary resmi dari GitHub Releases, atau `pipx install "yt-dlp[default]"`) dan Node.js 20+; opsional `ffmpeg` untuk MP3.
-- **Vercel / tanpa Docker**: tidak ada yt-dlp di PATH, jadi binary diunduh otomatis ke `/tmp` saat request pertama (cold start lebih lama). MP3 tidak tersedia tanpa ffmpeg. IP Vercel sering diblokir YouTube; pakai cookies/proxy bila perlu.
-- Env: lihat `.env.example` (`YTDLP_PATH`, `YTDLP_AUTO_DOWNLOAD`, `YTDLP_COOKIES_FILE`, `YOUTUBE_COOKIES`, `YTDLP_PROXY`, `YTDLP_REMOTE_COMPONENTS`, `YTDLP_MAX_PARALLEL`, `FFMPEG_PATH`, `PUBLIC_BASE_URL`).
-- Hasil diunduh lewat `/file` karena link googlevideo terikat ke IP server. MP3 dikonversi saat diunduh (ffmpeg, 192 kbps).
+- Link unduhan adalah link SnapYT (`data-force`) yang langsung dibuka browser pengguna, tidak lewat server Fetchio.
+- Deskripsi, views, dan tanggal upload tidak tersedia dari SnapYT; nama channel diambil dari YouTube oEmbed.
+- Env opsional: `SNAPYT_BASE`. Cek alur: `npm run ytdlp:check [VIDEO_ID]`.
+- `ytdlp.ts` dan `ytcookies.ts` sudah tidak dipakai YouTube; boleh dihapus bersama Dockerfile yt-dlp jika tidak diperlukan lagi.
 
 ## YouTube: cookies & diagnosis
 - Isi cookies lewat `YTDLP_COOKIES_FILE`, `YTDLP_COOKIES_BASE64`, atau `YOUTUBE_COOKIES`. Format apa pun diterima (Netscape, JSON Cookie-Editor, atau header `SID=...; ...`) dan otomatis diubah ke Netscape di folder sementara.

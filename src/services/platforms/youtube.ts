@@ -3,38 +3,44 @@
   Telegram : t.me/seikagenou
   Mohon Untuk Tidak Menghapus, Mengedit, dll Watermark Di Dalam Kode Ini
 */
-import { tmpdir } from "os";
-import { join } from "path";
-import { MediaFormat, MediaResult, ThumbnailInfo, encodeToken, UA } from "./tiktok";
-import { YtDlpUnavailable, ffmpegBinary, runYtDlp } from "../ytdlp";
-import { CookieConfigError, CookieSummary, describe, prepareCookies, redact } from "../ytcookies";
+import { MediaFormat, MediaResult, ThumbnailInfo } from "./tiktok";
 
 /* =====================================================================
-   YouTube — yt-dlp EKSTERNAL (tanpa API pihak ketiga, tanpa source yt-dlp di repo)
+   YouTube — lewat SnapYT (https://www.snapyt.app), diport dari scraper Node milik pengguna.
 
-   yt-dlp dipanggil lewat child_process (lihat src/services/ytdlp.ts) dari executable yang
-   dipasang di server (Dockerfile memasangnya) atau diunduh otomatis ke folder sementara.
-   JavaScript runtime untuk tantangan YouTube = Node.js yang menjalankan aplikasi ini.
+   Alur:
+     1. POST admin-ajax.php  action=vd_fresh_nonce            -> nonce
+     2. POST admin-ajax.php  action=process_video_url         -> { data.redirect } (halaman preview)
+     3. GET  halaman preview -> judul, durasi, thumbnail, daftar format (<select id="fmt-select">)
+     4. (opsional) YouTube oEmbed -> nama channel
 
-   Env (semua opsional):
-     YTDLP_PATH               path executable yt-dlp (default: `yt-dlp` di PATH)
-     YTDLP_AUTO_DOWNLOAD      "0" = jangan unduh otomatis bila yt-dlp tidak ada
-     YTDLP_COOKIES_FILE       file cookies (Netscape / JSON Cookie-Editor / header string)
-     YTDLP_COOKIES_BASE64     isi cookies dalam Base64 (untuk Environment Variables Vercel)
-     YOUTUBE_COOKIES          isi cookies biasa (alternatif)
-     YTDLP_PLAYER_CLIENT      opsional, mis. "tv,web_safari" (extractor-args youtube:player_client)
-     YTDLP_PROXY              mis. http://user:pass@host:port (berguna kalau IP server diblokir YouTube)
-     YTDLP_REMOTE_COMPONENTS  mis. "ejs:github" - hanya perlu jika yt-dlp BUKAN executable resmi
-                              (executable resmi sudah membawa yt-dlp-ejs)
-     YTDLP_MAX_PARALLEL       proses yt-dlp bersamaan, default 3
-     FFMPEG_PATH              path ffmpeg; bila ada, opsi audio MP3 ikut ditampilkan
+   Tanpa axios/cheerio: memakai fetch bawaan Node dan parser HTML ringan di bawah.
+   Link unduhan = `data-force` SnapYT (langsung dari SnapYT ke browser pengguna, tidak lewat server
+   Fetchio). Jika tidak ada, dipakai `data-url` (googlevideo, cepat kedaluwarsa).
+
+   Env (opsional):
+     SNAPYT_BASE   default https://www.snapyt.app
    ===================================================================== */
 
-const TIMEOUT = 60_000;
+const BASE = (process.env.SNAPYT_BASE?.trim() || "https://www.snapyt.app").replace(/\/+$/, "");
+const AJAX = `${BASE}/wp-admin/admin-ajax.php`;
+const HOME = `${BASE}/id/`;
+const TIMEOUT = 45_000;
+const RETRIES = 3;
+const SNAP_HOST = new URL(BASE).hostname.toLowerCase();
 
+const SNAP_UA =
+  "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+const HEADERS: Record<string, string> = {
+  "User-Agent": SNAP_UA,
+  Accept: "text/html,application/json,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "id-ID,id;q=0.9,en;q=0.8",
+};
+
+/* ---------- host helper (dipakai fetchio-app.ts) ---------- */
 export function isYouTubeHost(host: string): boolean {
   const h = host.toLowerCase().replace(/^www\./, "");
-  return h === "youtu.be" || h === "youtube.com" || h.endsWith(".youtube.com");
+  return h === "youtu.be" || h === "youtube.com" || h.endsWith(".youtube.com") || h === "youtube-nocookie.com" || h.endsWith(".youtube-nocookie.com");
 }
 const YT_CDN = ["googlevideo.com", "ytimg.com", "ggpht.com", "googleusercontent.com", "youtube.com"];
 export function isYouTubeCdnHost(host: string): boolean {
@@ -44,8 +50,8 @@ export function isYouTubeCdnHost(host: string): boolean {
 
 export function extractVideoId(input: string): string | null {
   try {
-    const u = new URL(input);
-    const h = u.hostname.toLowerCase().replace(/^www\./, "");
+    const u = new URL(/^https?:\/\//i.test(input.trim()) ? input.trim() : "https://" + input.trim());
+    const h = u.hostname.toLowerCase().replace(/^www\.|^m\./, "");
     let id: string | undefined;
     if (h === "youtu.be") id = u.pathname.slice(1).split("/")[0];
     else {
@@ -57,205 +63,288 @@ export function extractVideoId(input: string): string | null {
 }
 
 /* ---------- helpers ---------- */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const str = (v: any): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-const num = (v: any) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : undefined; };
-const httpUrl = (v: any): string | undefined => {
+const cleanName = (s: string) => s.replace(/[\\/:*?"<>|\r\n]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "youtube";
+const mb = (n?: number | null) => (n ? ` · ${n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB"}` : "");
+
+function httpUrl(v: any, base = BASE): string | undefined {
   const s = str(v);
   if (!s) return undefined;
-  try { const u = new URL(s.startsWith("//") ? "https:" + s : s); return /^https?:$/.test(u.protocol) ? u.href : undefined; } catch { return undefined; }
-};
-const cleanName = (s: string) => s.replace(/[\\/:*?"<>|\r\n]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "youtube";
-const mb = (n?: number) => (n ? ` · ${n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB"}` : "");
-const hasV = (f: any) => !!f?.vcodec && f.vcodec !== "none";
-const hasA = (f: any) => !!f?.acodec && f.acodec !== "none";
-
-/* ---------- menjalankan yt-dlp ---------- */
-let cacheDir: string | undefined;
-
-function cookiesArgs(): { args: string[]; summary?: CookieSummary } {
-  const c = prepareCookies();            // melempar CookieConfigError bila cookies salah konfigurasi
-  return c ? { args: ["--cookies", c.file], summary: c.summary } : { args: [] };
-}
-
-/** batasi proses yt-dlp yang jalan bersamaan supaya server tidak kewalahan */
-const MAX = Math.max(1, Number(process.env.YTDLP_MAX_PARALLEL) || 3);
-let active = 0;
-async function slot<T>(fn: () => Promise<T>): Promise<T> {
-  if (active >= MAX) throw new Error("Server sedang sibuk, coba lagi sebentar");
-  active++;
-  try { return await fn(); } finally { active--; }
-}
-
-function friendly(err: any, cookies?: CookieSummary): Error {
-  if (err instanceof YtDlpUnavailable || err instanceof CookieConfigError) return err;
-  const out = String(err?.stderr ?? "") + " " + String(err?.message ?? "");
-  // penyebab sebenarnya dicatat di log server (tanpa nilai cookie)
-  console.error("[yt-dlp]", err?.code ?? "", redact(out).slice(-1500).replace(/\s+/g, " "));
-  if (err?.code === "ENOENT" || err?.code === "EACCES") return new Error("yt-dlp tidak ditemukan atau tidak bisa dijalankan di server");
-  if (err?.killed || err?.signal === "SIGTERM") return new Error("Pengambilan data YouTube terlalu lama, coba lagi");
-  if (/cookies are no longer valid|likely been rotated/i.test(out))
-    return new Error("Cookies YouTube sudah tidak valid (dirotasi YouTube). Ekspor ulang lewat jendela incognito: login, buka youtube.com/robots.txt, ekspor, lalu tutup jendelanya");
-  if (/confirm your age|age.restricted|inappropriate for some users/i.test(out)) return new Error(cookies ? "Video dibatasi usia dan akun pada cookies belum bisa mengaksesnya" : "Video dibatasi usia dan butuh login (atur cookies)");
-  if (/confirm you.?re not a bot|sign in to confirm/i.test(out))
-    return new Error(cookies
-      ? `YouTube tetap meminta verifikasi walau cookies dipakai (${cookies.youtube} cookie, login ${cookies.loggedIn ? "terdeteksi" : "tidak terdeteksi"}). Biasanya IP server (datacenter) ditandai atau sesi cookies sudah dirotasi: pakai proxy residensial (YTDLP_PROXY) dan ekspor ulang cookies dari incognito`
-      : "YouTube meminta verifikasi dari server ini dan tidak ada cookies yang terpasang. Atur cookies (YTDLP_COOKIES_FILE / YTDLP_COOKIES_BASE64) atau proxy (YTDLP_PROXY)");
-  if (/private video/i.test(out)) return new Error("Video ini privat");
-  if (/members.only|join this channel/i.test(out)) return new Error("Video ini khusus anggota channel");
-  if (/not available in your country|blocked it in your country|geo/i.test(out)) return new Error("Video tidak tersedia di wilayah server");
-  if (/video unavailable|has been removed|no longer available|does not exist|terminated/i.test(out)) return new Error("Video tidak tersedia atau sudah dihapus");
-  if (/live event will begin|premieres in|is upcoming/i.test(out)) return new Error("Siaran langsung/premiere ini belum dimulai");
-  if (/unsupported url|is not a valid url/i.test(out)) return new Error("Link YouTube tidak didukung");
-  if (/requested format is not available|no video formats/i.test(out)) return new Error("Format video tidak tersedia untuk video ini");
-  if (/http error 429|too many requests/i.test(out)) return new Error("YouTube membatasi permintaan dari server ini, coba lagi nanti");
-  return new Error("Gagal mengambil data video dari YouTube");
-}
-
-function ytdlpArgs(id: string, extra: string[] = []): { args: string[]; cookies?: CookieSummary } {
-  cacheDir ??= join(tmpdir(), "fetchio-ytdlp-cache");
-  const remote = process.env.YTDLP_REMOTE_COMPONENTS;
-  const client = process.env.YTDLP_PLAYER_CLIENT?.trim();
-  const ck = cookiesArgs();
-  return {
-    cookies: ck.summary,
-    args: [
-      "-J", "--no-playlist", "--no-update", "--ignore-config", ...extra,        // tanpa --no-warnings: WARNING soal cookies harus terlihat
-      "--socket-timeout", "20", "--cache-dir", cacheDir,
-      "--js-runtimes", `node:${process.execPath}`,
-      ...(remote && remote !== "0" ? ["--remote-components", remote] : []),
-      ...(client && /^[\w,.-]+$/.test(client) ? ["--extractor-args", `youtube:player_client=${client}`] : []),
-      ...(process.env.YTDLP_PROXY ? ["--proxy", process.env.YTDLP_PROXY] : []),
-      ...ck.args,
-      "--", `https://www.youtube.com/watch?v=${id}`,       // URL dibangun ulang dari ID tervalidasi, tanpa shell
-    ],
-  };
-}
-
-async function ytdlpJson(id: string): Promise<any> {
-  let built: ReturnType<typeof ytdlpArgs>;
-  try { built = ytdlpArgs(id); } catch (e) { throw friendly(e); }
-  const { args, cookies } = built;
-  return slot(async () => {
-    try {
-      const { stdout, stderr } = await runYtDlp(args, { timeout: TIMEOUT, maxBuffer: 96 * 1024 * 1024 });
-      if (/cookies are no longer valid|likely been rotated/i.test(stderr)) console.error("[yt-dlp] PERINGATAN: cookies sudah dirotasi YouTube, ekspor ulang");
-      return JSON.parse(stdout);
-    } catch (e) { throw friendly(e, cookies); }
-  });
-}
-
-/** Untuk `npm run ytdlp:check`: menjalankan yt-dlp apa adanya dan mengembalikan ringkasan + stderr (tanpa nilai cookie). */
-export async function diagnoseYouTube(id = "dQw4w9WgXcQ"): Promise<{ cookies: string; ok: boolean; stderr: string }> {
-  let built: ReturnType<typeof ytdlpArgs>;
-  try { built = ytdlpArgs(id, ["-v"]); } catch (e: any) { return { cookies: String(e?.message ?? e), ok: false, stderr: "" }; }
   try {
-    const { stderr } = await runYtDlp(built.args, { timeout: TIMEOUT, maxBuffer: 96 * 1024 * 1024 });
-    return { cookies: describe(built.cookies), ok: true, stderr: redact(stderr) };
-  } catch (e: any) {
-    return { cookies: describe(built.cookies), ok: false, stderr: redact(String(e?.stderr ?? e?.message ?? e)) };
-  }
+    const u = new URL(s.startsWith("//") ? "https:" + s : s, base);
+    return /^https?:$/.test(u.protocol) ? u.href : undefined;
+  } catch { return undefined; }
 }
 
-/* ---------- ubah JSON yt-dlp -> hasil Fetchio ---------- */
-const isoDate = (j: any): string | null => {
-  const d = str(j?.upload_date);
-  if (d && /^\d{8}$/.test(d)) return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
-  return num(j?.timestamp) ? new Date(Number(j.timestamp) * 1000).toISOString() : null;
-};
+function parseSizeToBytes(size?: string | null): number | undefined {
+  const m = String(size ?? "").match(/([\d.]+)\s*(KB|MB|GB)/i);
+  if (!m) return undefined;
+  const mult = { GB: 1024 ** 3, MB: 1024 ** 2, KB: 1024 }[m[2].toUpperCase() as "GB" | "MB" | "KB"];
+  return Math.round(parseFloat(m[1]) * mult);
+}
+const parseResolution = (s?: string | null) => String(s ?? "").match(/(\d{3,4})p/)?.[1];
+const parseBitrate = (s?: string | null) => { const m = String(s ?? "").match(/(\d{2,3})\s*kbps/i); return m ? parseInt(m[1], 10) : undefined; };
+function parseDuration(s?: string | null): number | null {
+  const m = String(s ?? "").match(/(\d{1,2}:)?(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return m[0].split(":").reduce((a, p) => a * 60 + parseInt(p, 10), 0);
+}
 
+/* ---------- HTTP (fetch + retry) ---------- */
+async function request(url: string, init: RequestInit): Promise<Response> {
+  let last: any;
+  for (let attempt = 1; attempt <= RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT), redirect: "follow" });
+      if (res.status >= 500 || res.status === 429) { last = new Error(`HTTP ${res.status}`); await res.body?.cancel().catch(() => {}); }
+      else return res;
+    } catch (e) { last = e; }
+    if (attempt < RETRIES) await sleep(1000 * attempt);
+  }
+  throw new Error(`Permintaan ke SnapYT gagal: ${last?.message ?? "unknown"}`);
+}
+
+async function postForm(fields: Record<string, string>): Promise<{ status: number; data: any }> {
+  const res = await request(AJAX, {
+    method: "POST",
+    headers: {
+      ...HEADERS,
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      Referer: HOME, Origin: BASE, "X-Requested-With": "XMLHttpRequest",
+    },
+    body: new URLSearchParams(fields).toString(),
+  });
+  const text = await res.text();
+  let data: any = text;
+  try { data = JSON.parse(text); } catch { /* bukan JSON (mis. "-1" / "0") */ }
+  return { status: res.status, data };
+}
+
+async function getText(url: string): Promise<string> {
+  // hanya halaman SnapYT / oEmbed yang boleh diambil server (anti-SSRF)
+  const host = new URL(url).hostname.toLowerCase();
+  if (host !== SNAP_HOST && host !== "www.youtube.com") throw new Error("Host preview tidak dikenal");
+  const res = await request(url, { headers: HEADERS });
+  if (!res.ok) throw new Error(`HTTP ${res.status} dari ${host}`);
+  return res.text();
+}
+
+/* ---------- inti SnapYT ---------- */
+async function getFreshNonce(): Promise<string> {
+  try {
+    const { data } = await postForm({ action: "vd_fresh_nonce" });
+    if (data?.success && data?.data?.nonce) return String(data.data.nonce);
+  } catch { /* lanjut ke fallback */ }
+  const html = await getText(HOME);
+  const m = html.match(/"nonce"\s*:\s*"([a-f0-9]+)"/);
+  if (m) return m[1];
+  throw new Error("Nonce SnapYT tidak ditemukan");
+}
+
+async function requestPreviewUrl(ytUrl: string): Promise<string> {
+  let lastMsg = "Respons SnapYT tidak valid";
+  for (let attempt = 0; attempt < 2; attempt++) {   // percobaan kedua = nonce baru (nonce basi)
+    const nonce = await getFreshNonce();
+    const { status, data: j } = await postForm({ action: "process_video_url", video_url: ytUrl, security: nonce });
+    const redirect = httpUrl(j?.data?.redirect);
+    if (j?.success && redirect) {
+      if (new URL(redirect).hostname.toLowerCase() !== SNAP_HOST) throw new Error("Redirect SnapYT tidak valid");
+      return redirect;
+    }
+    lastMsg = typeof j?.data === "string" ? j.data : j?.data?.message || `Respons SnapYT tidak valid (HTTP ${status})`;
+    console.error("[snapyt] process_video_url gagal:", status, String(lastMsg).slice(0, 200));
+  }
+  throw new Error(lastMsg);
+}
+
+/* ---------- parser HTML ringan (pengganti cheerio) ---------- */
+const decode = (s: string) =>
+  s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&#x([\da-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
+const textOf = (html: string) => decode(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+
+function attrs(tag: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const re = /([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(tag))) out[m[1].toLowerCase()] = decode(m[2] ?? m[3] ?? m[4] ?? "");
+  return out;
+}
+/** tag pembuka pertama yang cocok (mis. id="vd-image") */
+function firstTag(html: string, name: string, test: (a: Record<string, string>) => boolean): Record<string, string> | null {
+  const re = new RegExp(`<${name}\\b[^>]*>`, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) { const a = attrs(m[0]); if (test(a)) return a; }
+  return null;
+}
+/** isi elemen pertama yang cocok; name = nama tag atau "*" untuk sembarang tag */
+function firstInner(html: string, name: string, test: (a: Record<string, string>) => boolean): string | null {
+  const re = new RegExp(`<(${name === "*" ? "[a-z][a-z0-9]*" : name})\\b([^>]*)>([\\s\\S]*?)</\\1>`, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) if (test(attrs(`<x ${m[2]}>`))) return m[3];
+  return null;
+}
+const hasClass = (a: Record<string, string>, c: string) => (a.class ?? "").split(/\s+/).includes(c);
+
+interface SnapFormat {
+  group: string; label: string; kind: string | null; ext: string | null; resolution?: string; bitrate?: number;
+  isMp3: boolean; size?: number; recommended: boolean; download?: string; stream?: string;
+}
+interface SnapPreview {
+  title: string | null; chip: string | null; status: string | null; error: string | null;
+  thumbs: string[]; durationText: string | null; formats: SnapFormat[];
+}
+
+function parsePreview(html: string): SnapPreview {
+  const title = textOf(firstInner(html, "h1", (a) => hasClass(a, "title")) ?? "") || null;
+  const chip = textOf(firstInner(html, "*", (a) => hasClass(a, "chip")) ?? "") || null;
+  const status = textOf(firstInner(html, "*", (a) => a.id === "fmt-sub") ?? "") || null;
+  const error = textOf(firstInner(html, "*", (a) => a.id === "error-message") ?? "") || null;
+
+  const img = firstTag(html, "img", (a) => a.id === "vd-image");
+  const thumbDl = firstTag(html, "[a-z][a-z0-9]*", (a) => a.id === "vd-thumb-dl");
+  const thumbs = [img?.src, ...(thumbDl?.["data-srcs"] ?? "").split("|")].map((s) => httpUrl(s?.trim())).filter((s): s is string => !!s);
+
+  const durationText = html.match(/Duration:\s*(?:<[^>]*>\s*)*([0-9:]+)/i)?.[1] ?? null;
+
+  const formats: SnapFormat[] = [];
+  const select = html.match(/<select\b[^>]*id=["']fmt-select["'][^>]*>([\s\S]*?)<\/select>/i)?.[1] ?? "";
+  const groupRe = /<optgroup\b([^>]*)>([\s\S]*?)<\/optgroup>/gi;
+  let g: RegExpExecArray | null;
+  while ((g = groupRe.exec(select))) {
+    const rawLabel = attrs(`<optgroup ${g[1]}>`).label ?? "";
+    const group = rawLabel.replace(/^[^\w]*\s*/, "").trim() || rawLabel;
+    const optRe = /<option\b([^>]*)>([\s\S]*?)<\/option>/gi;
+    let o: RegExpExecArray | null;
+    while ((o = optRe.exec(g[2]))) {
+      const a = attrs(`<option ${o[1]}>`);
+      const text = textOf(o[2]);
+      const label = (a["data-label"] ?? text).replace(/\s+/g, " ").trim();
+      const bytes = Number(a["data-bytes"]);
+      const mp3 = a["data-mp3"];
+      formats.push({
+        group, label: label || text, kind: a["data-kind"] || null, ext: (a["data-ext"] || "").toLowerCase() || null,
+        resolution: parseResolution(label || text),
+        bitrate: mp3 ? parseInt(mp3, 10) : parseBitrate(label || text),
+        isMp3: !!mp3 || /mp3/i.test(label || text),
+        size: Number.isFinite(bytes) && bytes > 0 ? bytes : parseSizeToBytes(a["data-size"]),
+        recommended: a["data-recommended"] === "1",
+        download: httpUrl(a["data-force"]),
+        stream: httpUrl(a["data-url"]),
+      });
+    }
+  }
+  return { title, chip, status, error, thumbs, durationText, formats };
+}
+
+async function fetchOEmbed(id: string) {
+  try {
+    const watch = `https://www.youtube.com/watch?v=${id}`;
+    const raw = await getText("https://www.youtube.com/oembed?format=json&url=" + encodeURIComponent(watch));
+    const o = JSON.parse(raw);
+    const url = httpUrl(o.author_url, "https://www.youtube.com") ?? null;
+    const handle = url?.match(/@([^/?#]+)/);
+    return { name: str(o.author_name) ?? null, url, handle: handle ? `@${decodeURIComponent(handle[1])}` : null, title: str(o.title) };
+  } catch { return { name: null, url: null, handle: null, title: undefined }; }
+}
+
+/* ---------- ubah hasil SnapYT -> hasil Fetchio ---------- */
 export async function resolveYouTube(inputUrl: string): Promise<MediaResult> {
   const id = extractVideoId(inputUrl);
   if (!id) throw new Error("Link YouTube tidak valid (gunakan link video, shorts, live, atau youtu.be)");
+  const canonical = `https://www.youtube.com/watch?v=${id}`;   // URL dibangun ulang dari ID tervalidasi
 
-  const j = await ytdlpJson(id);
-  if (j?.is_live) throw new Error("Siaran langsung tidak bisa diunduh sampai selesai");
-  const title = str(j?.title) ?? "YouTube";
-  const base = cleanName(`${title} - ${id}`);
-
-  const ok: any[] = (Array.isArray(j?.formats) ? j.formats : []).filter(
-    (f: any) => httpUrl(f?.url) && /^https/i.test(String(f.protocol ?? "https")) && f.ext !== "mhtml" && !/storyboard/i.test(String(f.format_note ?? ""))
-  );
-  const sizeOf = (f: any) => num(f.filesize) ?? num(f.filesize_approx);
-  // link googlevideo terikat ke IP server yang menjalankan yt-dlp: unduh lewat /file (proxy)
-  const link = (f: any, name: string, type: "video" | "audio") =>
-    "/file?t=" + encodeToken({ u: httpUrl(f.url)!, c: "", n: name, t: type, a: str(f.http_headers?.["User-Agent"]) ?? UA, r: "" });
-
-  // video: satu pilihan terbaik per resolusi (utamakan yang sudah ada suaranya); webm hanya untuk resolusi di atas mp4
-  const best = (list: any[]) => list.sort((a, b) => Number(hasA(b)) - Number(hasA(a)) || (num(b.tbr) ?? 0) - (num(a.tbr) ?? 0))[0];
-  const byHeight = (ext: string) => {
-    const m = new Map<number, any[]>();
-    for (const f of ok.filter((f) => hasV(f) && f.ext === ext && num(f.height))) { const k = Number(f.height); m.set(k, [...(m.get(k) ?? []), f]); }
-    return new Map([...m].map(([k, v]) => [k, best(v)] as [number, any]));
-  };
-  const mp4 = byHeight("mp4");
-  const webm = byHeight("webm");
-  const maxMp4 = Math.max(0, ...mp4.keys());
-  const chosen: any[] = [...mp4.values(), ...[...webm].filter(([h]) => h > maxMp4).map(([, f]) => f)].sort((a, b) => a.height - b.height);
-
-  const videos: MediaFormat[] = chosen.map((f) => {
-    const size = sizeOf(f);
-    const audio = hasA(f);
-    const ext = f.ext === "webm" ? "webm" : "mp4";
-    return {
-      type: "video", quality: `${f.height}p`, ext, height: Number(f.height), size, hasAudio: audio,
-      label: `${ext.toUpperCase()} ${f.height}p${audio ? "" : " · tanpa audio"}${mb(size)}`,
-      url: link(f, `${base} - ${f.height}p.${ext}`, "video"),
-    };
-  });
-
-  // audio: terbaik per kontainer (m4a, webm -> weba)
-  const audios: MediaFormat[] = [];
-  for (const [src, ext] of [["m4a", "m4a"], ["webm", "weba"]] as const) {
-    const f = ok.filter((f) => hasA(f) && !hasV(f) && f.ext === src).sort((a, b) => (num(b.abr) ?? 0) - (num(a.abr) ?? 0))[0];
-    if (!f) continue;
-    const size = sizeOf(f);
-    const br = num(f.abr) ? Math.round(Number(f.abr) * 1000) : undefined;
-    audios.push({
-      type: "audio", quality: br ? `${Math.round(br / 1000)}kbps` : ext, ext, size, bitrate: br,
-      label: `Audio ${ext.toUpperCase()}${br ? ` ${Math.round(br / 1000)} kbps` : ""}${mb(size)}`,
-      url: link(f, `${base}.${ext}`, "audio"),
-    });
+  let preview: SnapPreview;
+  try {
+    const redirect = await requestPreviewUrl(canonical);
+    preview = parsePreview(await getText(redirect));
+  } catch (e: any) {
+    console.error("[snapyt]", e?.message ?? e);
+    const m = String(e?.message ?? "");
+    if (/privat|private/i.test(m)) throw new Error("Video ini privat");
+    if (/tidak tersedia|unavailable|removed|dihapus/i.test(m)) throw new Error("Video tidak tersedia atau sudah dihapus");
+    throw new Error("Gagal mengambil data video dari YouTube");
   }
-  // MP3: dikonversi saat diunduh lewat ffmpeg (hanya jika ffmpeg ada di server)
-  if (await ffmpegBinary()) {
-    const src = ok.filter((f) => hasA(f) && !hasV(f)).sort((a, b) => Number(a.ext === "m4a") - Number(b.ext === "m4a") || (num(a.abr) ?? 0) - (num(b.abr) ?? 0)).pop();
-    if (src) {
-      const dur = num(j?.duration);
-      audios.unshift({
-        type: "audio", quality: "192kbps", ext: "mp3", bitrate: 192_000, size: dur ? Math.round(dur * 24_000) : undefined,
-        label: `Audio MP3 192 kbps`,
-        url: "/file?t=" + encodeToken({ u: httpUrl(src.url)!, c: "", n: `${base}.mp3`, t: "mp3", a: str(src.http_headers?.["User-Agent"]) ?? UA, r: "" }),
-      });
-    }
+  if (!preview.formats.length && !preview.title)
+    throw new Error(preview.error || "Video tidak ditemukan atau tidak bisa diunduh (mungkin dihapus, privat, atau diblokir regional)");
+
+  const oembed = await fetchOEmbed(id);
+  const title = preview.title ?? oembed.title ?? "YouTube";
+  const base = cleanName(`${title} - ${id}`);
+  const duration = parseDuration(preview.durationText);
+
+  const linkOf = (f: SnapFormat) => f.download ?? f.stream;
+  const usable = preview.formats.filter((f) => linkOf(f));
+
+  /* video: satu pilihan per (resolusi, ekstensi); utamakan yang sudah ada suara */
+  const rank = (f: SnapFormat) => (f.kind === "video+audio" ? 2 : 0) + (f.recommended ? 1 : 0);
+  const vmap = new Map<string, SnapFormat>();
+  for (const f of usable.filter((f) => f.kind !== "audio-only" && !f.isMp3 && f.resolution)) {
+    const key = `${f.resolution}|${f.ext ?? "mp4"}`;
+    const cur = vmap.get(key);
+    if (!cur || rank(f) > rank(cur)) vmap.set(key, f);
+  }
+  const videos: MediaFormat[] = [...vmap.values()]
+    .sort((a, b) => Number(a.resolution) - Number(b.resolution) || Number(a.ext !== "mp4") - Number(b.ext !== "mp4"))
+    .map((f) => {
+      const ext = f.ext === "webm" ? "webm" : "mp4";
+      const height = Number(f.resolution);
+      const audio = f.kind ? f.kind === "video+audio" : undefined;
+      return {
+        type: "video" as const, quality: `${height}p`, ext, height, size: f.size, hasAudio: audio,
+        label: `${ext.toUpperCase()} ${height}p${audio === false ? " · tanpa audio" : ""}${mb(f.size)}`,
+        url: linkOf(f)!,
+      };
+    });
+
+  /* audio: MP3, M4A, WEBA — tertinggi per jenis */
+  const audios: MediaFormat[] = [];
+  const audioSrc = usable.filter((f) => f.kind === "audio-only" || f.isMp3);
+  for (const ext of ["mp3", "m4a", "weba"] as const) {
+    const pool = audioSrc.filter((f) => (ext === "mp3" ? f.isMp3 : !f.isMp3 && (f.ext === ext || (ext === "weba" && f.ext === "webm"))));
+    const f = pool.sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0];
+    if (!f) continue;
+    audios.push({
+      type: "audio", quality: f.bitrate ? `${f.bitrate}kbps` : ext, ext, size: f.size, bitrate: f.bitrate ? f.bitrate * 1000 : undefined,
+      label: `Audio ${ext.toUpperCase()}${f.bitrate ? ` ${f.bitrate} kbps` : ""}${mb(f.size)}`,
+      url: linkOf(f)!,
+    });
   }
   if (!videos.length && !audios.length) throw new Error("Tidak ada format yang bisa diunduh untuk video ini");
 
   const thumbnails: ThumbnailInfo[] = [
+    ...preview.thumbs.map((url) => ({ url })),
     { url: `https://i.ytimg.com/vi/${id}/maxresdefault.jpg` },
     { url: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` },
-    ...(httpUrl(j?.thumbnail) ? [{ url: httpUrl(j.thumbnail)! }] : []),
-  ];
-  const name = str(j?.channel) ?? str(j?.uploader) ?? null;
-  const handle = str(j?.uploader_id);
+  ].filter((t, i, a) => a.findIndex((x) => x.url === t.url) === i);
+
   return {
     platform: "youtube",
     id,
     title: title.slice(0, 200),
-    author: name,
+    author: oembed.name,
     thumbnail: thumbnails[0].url,
-    duration: num(j?.duration) ? Math.round(Number(j.duration)) : null,
+    duration,
     formats: [...videos, ...audios],
-    description: (str(j?.description) ?? "").slice(0, 5000),
-    channel: {
-      name, id: str(j?.channel_id) ?? null, handle: handle?.startsWith("@") ? handle : null,
-      url: httpUrl(j?.channel_url) ?? null, avatar: null, subscribersText: null, subscribers: num(j?.channel_follower_count) ?? null,
-    },
-    views: num(j?.view_count) ?? null,
-    publishedAt: isoDate(j),
-    uploadedAt: isoDate(j),
+    description: "",                       // SnapYT tidak menampilkan deskripsi
+    channel: { name: oembed.name, id: null, handle: oembed.handle, url: oembed.url, avatar: null, subscribersText: null, subscribers: null },
+    views: null,                           // tidak tersedia di SnapYT
+    publishedAt: null,
+    uploadedAt: null,
     editedAt: null,
-    keywords: Array.isArray(j?.tags) ? j.tags.slice(0, 30).map(String) : [],
+    keywords: [],
     thumbnails,
     captions: [],
   };
+}
+
+/** Untuk `npm run ytdlp:check` (kini mengecek SnapYT): mengambil satu video contoh dan melaporkan hasilnya. */
+export async function diagnoseYouTube(id = "dQw4w9WgXcQ"): Promise<{ cookies: string; ok: boolean; stderr: string }> {
+  try {
+    const r = await resolveYouTube(`https://www.youtube.com/watch?v=${id}`);
+    return { cookies: "tidak dipakai (SnapYT)", ok: true, stderr: `${r.title} · ${r.formats.length} format` };
+  } catch (e: any) {
+    return { cookies: "tidak dipakai (SnapYT)", ok: false, stderr: String(e?.message ?? e) };
+  }
 }
