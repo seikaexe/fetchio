@@ -20,7 +20,8 @@ import { YtDlpUnavailable, ffmpegBinary, runYtDlp } from "../ytdlp";
      YTDLP_PATH               path executable yt-dlp (default: `yt-dlp` di PATH)
      YTDLP_AUTO_DOWNLOAD      "0" = jangan unduh otomatis bila yt-dlp tidak ada
      YTDLP_COOKIES_FILE       file cookies Netscape
-     YOUTUBE_COOKIES          isi cookies Netscape (ditulis ke file sementara)
+     YTDLP_COOKIES_BASE64     cookies Netscape dalam Base64 (untuk Environment Variables Vercel)
+     YOUTUBE_COOKIES          isi cookies Netscape biasa (alternatif)
      YTDLP_PROXY              mis. http://user:pass@host:port (berguna kalau IP server diblokir YouTube)
      YTDLP_REMOTE_COMPONENTS  mis. "ejs:github" - hanya perlu jika yt-dlp BUKAN executable resmi
                               (executable resmi sudah membawa yt-dlp-ejs)
@@ -72,13 +73,24 @@ let cookieFile: string | undefined;
 let cacheDir: string | undefined;
 
 function cookiesArgs(): string[] {
-  const f = process.env.YTDLP_COOKIES_FILE;
-  if (f) return ["--cookies", f];
-  const raw = process.env.YOUTUBE_COOKIES;
+  // File path (mis. Secret File di hosting) memiliki prioritas tertinggi.
+  const filePath = process.env.YTDLP_COOKIES_FILE?.trim();
+  if (filePath) return ["--cookies", filePath];
+
+  // Vercel: simpan isi cookies Netscape sebagai Base64 di Environment Variables.
+  // File dibuat di /tmp (tmpdir pada Vercel) dan tidak pernah masuk repository.
+  const encoded = process.env.YTDLP_COOKIES_BASE64?.trim();
+  const raw = encoded
+    ? Buffer.from(encoded, "base64").toString("utf8")
+    : process.env.YOUTUBE_COOKIES;
   if (raw && raw.trim()) {
     if (!cookieFile) {
-      const file = join(mkdtempSync(join(tmpdir(), "fetchio-")), "cookies.txt");
-      writeFileSync(file, raw.replace(/\\n/g, "\n"), { mode: 0o600 });
+      const contents = raw.replace(/\\n/g, "\n");
+      if (!contents.includes("# Netscape HTTP Cookie File") && !contents.includes("# HTTP Cookie File")) {
+        throw new Error("Cookies YouTube harus menggunakan format Netscape cookies.txt");
+      }
+      const file = join(mkdtempSync(join(tmpdir(), "fetchio-")), "youtube-cookies.txt");
+      writeFileSync(file, contents, { mode: 0o600 });
       cookieFile = file;
     }
     return ["--cookies", cookieFile as string];

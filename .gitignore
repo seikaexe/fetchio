@@ -3,6 +3,7 @@ node_modules/
 .vercel/
 dist/
 youtube-cookies.json
+youtube-cookies.txt
 cookies*.json
 cookie.txt
 
