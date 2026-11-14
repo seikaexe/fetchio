@@ -1,0 +1,14 @@
+node_modules/
+.env
+.vercel/
+dist/
+youtube-cookies.json
+cookies*.json
+cookie.txt
+
+# yt-dlp dipasang di server, jangan simpan source/binary-nya di repository
+vendor/
+yt-dlp
+yt-dlp_*
+yt-dlp.exe
+yt_dlp/

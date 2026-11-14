@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "framework": null,
+  "outputDirectory": "public",
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/download", "destination": "/api/index" },
+    { "source": "/file", "destination": "/api/index" }
+  ]
+}

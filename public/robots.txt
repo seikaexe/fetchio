@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /file
+Disallow: /download
+Sitemap: https://fetchio-five.vercel.app/sitemap.xml

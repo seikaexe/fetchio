@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Fetchio — Unduh Apa Saja dengan Mudah. Unduh video, foto, dan media dari berbagai platform.">
+  <title>Fetchio — Unduh Apa Saja dengan Mudah</title>
+  <link rel="stylesheet" href="/assets/css/main.css">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="canonical" href="https://fetchio-five.vercel.app/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Fetchio">
+  <meta property="og:title" content="Fetchio — Unduh Apa Saja dengan Mudah">
+  <meta property="og:description" content="Unduh video TikTok dalam kualitas HD, 4K atau audio MP3 dengan cepat, gratis, dan mudah">
+  <meta property="og:url" content="https://fetchio-five.vercel.app/">
+  <meta property="og:image" content="https://fetchio-five.vercel.app/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="1200">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:image" content="https://fetchio-five.vercel.app/og-image.png">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"Fetchio","url":"https://fetchio-five.vercel.app/","image":"https://fetchio-five.vercel.app/og-image.png","publisher":{"@type":"Organization","name":"Fetchio","url":"https://fetchio-five.vercel.app/","logo":"https://fetchio-five.vercel.app/icon-512.png"}}</script>
+</head>
+<body id="top">
+<div class="page">
+  <div class="corner"></div>
+  <header>
+    <div class="container nav">
+      <a class="brand" href="/" aria-label="Beranda Fetchio"><img src="/assets/img/logo.png" alt="Fetchio" width="126" height="62"></a>
+      <nav class="navlinks" aria-label="Navigasi utama">
+        <a class="active" href="#top">⌂ &nbsp;Beranda</a>
+        <a href="/supported">Dukungan</a>
+        <a href="#faq">FAQ</a>
+        <a href="#about">Tentang</a>
+      </nav>
+      <a class="join" href="https://whatsapp.com/channel/0029VbEQXIG3AzNM8sqGsb2z" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+        Gabung Saluran
+      </a>
+      <button class="menu-btn" id="menuBtn" aria-label="Buka menu" aria-expanded="false">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <nav class="mobile-menu" id="mobileMenu">
+        <a href="#top">Beranda</a><a href="/supported">Dukungan</a><a href="#faq">FAQ</a><a href="#about">Tentang</a>
+        <a href="https://whatsapp.com/channel/0029VbEQXIG3AzNM8sqGsb2z" target="_blank" rel="noopener">Gabung Saluran ↗</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container" id="home">
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="sparkle">✦</span> Cepat • Gratis • Tanpa Batas</div>
+        <h1>Fetchio<span>Unduh Apa Saja,<br><em>dengan Mudah</em></span></h1>
+        <p class="intro">Unduh video TikTok dalam kualitas HD, 4K atau 8K (MP4) maupun audio jernih (MP3)<br class="desktop-break"> — platform lainnya segera hadir</p>
+        <form class="download-form" id="downloadForm">
+          <span class="link-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
+          <input id="mediaUrl" type="url" placeholder="Tempel tautan di sini..." aria-label="Tempel tautan media" required>
+          <button class="download" id="downloadButton" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg>Unduh</button>
+        </form>
+        <div class="notice" id="notice" role="status" aria-live="polite"></div>
+        <div class="result" id="result" aria-live="polite"></div>
+        <div class="supported" id="supported"><span class="bolt" aria-hidden="true">ϟ</span><span class="supported-text">Dukungan download tersedia untuk berbagai platform</span></div>
+      </div>
+
+      <div class="hero-art" aria-label="Ilustrasi platform media">
+        <svg class="art-svg" viewBox="0 0 650 430" fill="none" aria-hidden="true">
+          <path d="M92 270 C130 112 376 15 548 45 C633 60 622 124 554 176" stroke="#050505" stroke-width="13" stroke-linecap="round"/>
+          <path d="M89 282 C22 370 113 410 263 367 C349 342 424 292 492 247" stroke="#050505" stroke-width="13" stroke-linecap="round"/>
+          <path d="M139 111 L535 91 Q567 90 560 123 L523 292 Q518 316 490 319 L112 341 Q78 343 87 310 L111 143 Q115 114 139 111Z" fill="#050505"/>
+          <path d="M153 124 L524 106 Q546 105 541 127 L508 282 Q504 300 482 302 L126 322 Q100 324 105 299 L128 148 Q131 126 153 124Z" fill="#101010" stroke="#242424" stroke-width="3"/>
+          <path d="M294 174 Q288 170 288 180 L281 245 Q280 255 290 250 L350 217 Q359 212 350 206Z" fill="white"/>
+          <path d="M158 284 L474 265" stroke="#777" stroke-width="5" stroke-linecap="round"/>
+          <path d="M178 283 L236 280" stroke="white" stroke-width="5" stroke-linecap="round"/>
+          <circle cx="158" cy="284" r="6" fill="white"/>
+          <path d="M492 251v24m0-24h-22m22 0 12-12m-12 12 12 12" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M101 145 L125 118 M529 317 L556 287" stroke="#fff" stroke-width="7"/>
+        </svg>
+        <div class="platform p-tiktok"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.6 7.1a6.9 6.9 0 0 1-4.3-1.5v8.1a6.2 6.2 0 1 1-5.4-6.1v3.3a2.9 2.9 0 1 0 2.1 2.8V2h3.3c.2 2.1 1.9 3.8 4.3 4.1z"/></svg></div>
+        <div class="platform p-youtube"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.3 3.6z"/></svg></div>
+        <div class="platform p-instagram"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="18" cy="6" r="1" fill="currentColor" stroke="none"/></svg></div>
+        <div class="platform p-facebook"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 21v-8h2.7l.4-3.1h-3.1v-2c0-.9.3-1.5 1.6-1.5h1.7V3.6c-.3 0-1.3-.1-2.5-.1-2.5 0-4.2 1.5-4.2 4.3v2.1H7.3V13h2.8v8z"/></svg></div>
+        <span class="star one">✦</span><span class="star two">✦</span><span class="star three">✦</span>
+      </div>
+    </section>
+
+    <section class="features" aria-label="Keunggulan Fetchio">
+      <article class="feature"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.2 1 4 13h6l-.8 10L20 10h-6z"/></svg></div><div><strong>Sangat Cepat</strong><small>Unduh hanya dalam hitungan detik</small></div></article>
+      <article class="feature"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/></svg></div><div><strong>100% Gratis</strong><small>Tanpa biaya tersembunyi</small></div></article>
+      <article class="feature"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M8 12c0-2.2 1.8-4 4-4s4 1.8 4 4-1.8 4-4 4-4-1.8-4-4Z"/><path d="M4 12c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8Z"/></svg></div><div><strong>Tanpa Batas</strong><small>Tanpa batasan penggunaan</small></div></article>
+      <article class="feature"><div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M10 18h4"/></svg></div><div><strong>Semua Perangkat</strong><small>Dapat digunakan di mana saja</small></div></article>
+    </section>
+
+    <section class="stats" aria-label="Statistik Fetchio">
+      <div class="stat"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="7" width="4" height="14" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg><span class="trust">Simpan Media dengan Mudah Dan Cepat</span></div>
+      <div class="stat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></svg><div><strong>Multi Platform</strong><small>Dukungan Berbagai Platform</small></div></div>
+      <div class="stat"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.2 1 4 13h6l-.8 10L20 10h-6z"/></svg><div><strong>Prosess Cepat</strong><small>Proses yang sederhana</small></div></div>
+      <div class="stat"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.5 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5-5.8-3.1-5.8 3.1 1.1-6.5-4.7-4.6 6.5-.9z"/></svg><div><strong>Penggunaan Gratis</strong><small>Mudah digunakan</small></div></div>
+    </section>
+
+    <section class="below" id="faq">
+      <div class="section-kicker">INFORMASI PENTING</div><h2>Pertanyaan yang Sering Diajukan</h2>
+      <div class="faq-grid">
+        <article><h3>Bagaimana cara menggunakan Fetchio?</h3><p>Salin tautan TikTok publik, tempelkan ke kolom yang tersedia, lalu tekan tombol Unduh. Pilih MP4 HD untuk video atau MP3 untuk audio</p></article>
+        <article><h3>Apakah Fetchio gratis?</h3><p>Ya, fetchio dapat digunakan secara gratis tanpa perlu masuk ke akun atau memasang aplikasi apa pun</p></article>
+        <article><h3>Platform apa saja yang didukung?</h3><p>Saat ini Fetchio mendukung TikTok dan YouTube. Instagram, Facebook, dan X direncanakan hadir berikutnya</p></article>
+      </div>
+    </section>
+    <section class="about" id="about"><div class="section-kicker">TENTANG FETCHIO</div><h2>Unduh Apa Saja dengan Mudah</h2><p>Fetchio menghadirkan antarmuka yang bersih dan sederhana untuk mengunduh media publik melalui tautan, hanya unduh konten milik sendiri atau konten yang telah mendapatkan izin untuk disimpan, selalu hormati ketentuan setiap platform dan hak cipta para kreator</p></section>
+  </main>
+  <footer class="site-footer"><div class="container footer-inner"><a class="footer-brand" href="/">Fetchio</a><span>© <span id="year"></span> Fetchio</span><a href="/supported">Dukungan ↗</a></div></footer>
+</div>
+<script src="/assets/js/app.js" defer></script>
+</body>
+</html>
