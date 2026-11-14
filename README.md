@@ -33,3 +33,10 @@ Urutan pencarian executable: `YTDLP_PATH` -> `yt-dlp` di PATH -> salinan cache d
 - **Vercel / tanpa Docker**: tidak ada yt-dlp di PATH, jadi binary diunduh otomatis ke `/tmp` saat request pertama (cold start lebih lama). MP3 tidak tersedia tanpa ffmpeg. IP Vercel sering diblokir YouTube; pakai cookies/proxy bila perlu.
 - Env: lihat `.env.example` (`YTDLP_PATH`, `YTDLP_AUTO_DOWNLOAD`, `YTDLP_COOKIES_FILE`, `YOUTUBE_COOKIES`, `YTDLP_PROXY`, `YTDLP_REMOTE_COMPONENTS`, `YTDLP_MAX_PARALLEL`, `FFMPEG_PATH`, `PUBLIC_BASE_URL`).
 - Hasil diunduh lewat `/file` karena link googlevideo terikat ke IP server. MP3 dikonversi saat diunduh (ffmpeg, 192 kbps).
+
+## YouTube: cookies & diagnosis
+- Isi cookies lewat `YTDLP_COOKIES_FILE`, `YTDLP_COOKIES_BASE64`, atau `YOUTUBE_COOKIES`. Format apa pun diterima (Netscape, JSON Cookie-Editor, atau header `SID=...; ...`) dan otomatis diubah ke Netscape di folder sementara.
+- Cookies yang dikonfigurasi tapi tidak bisa dipakai (file tidak ada, tidak ada sesi login, semua kedaluwarsa) sekarang menghasilkan pesan error yang jelas, bukan diam-diam berjalan tanpa cookies.
+- Cara ekspor yang tahan lama (YouTube merotasi cookies tab yang terbuka): jendela incognito -> login -> buka `https://www.youtube.com/robots.txt` di tab yang sama -> ekspor cookies youtube.com -> tutup jendela incognito tanpa logout.
+- Cek penyebab kegagalan: `npm run ytdlp:check` (menampilkan ringkasan cookies tanpa nilainya dan stderr asli yt-dlp). Log server juga mencatat stderr yt-dlp (`[yt-dlp] ...`).
+- Jika IP server (datacenter, termasuk Vercel) ditandai YouTube, cookies saja tidak cukup: pakai `YTDLP_PROXY` residensial. `YTDLP_PLAYER_CLIENT` (mis. `tv,web_safari`) bisa dicoba untuk eksperimen.

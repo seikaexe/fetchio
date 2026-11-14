@@ -108,11 +108,11 @@ export function ytdlpBinary(): Promise<string> {
   return cached;
 }
 
-/** Menjalankan yt-dlp lewat child_process (tanpa shell) dan mengembalikan stdout. */
-export async function runYtDlp(args: string[], opt: { timeout: number; maxBuffer: number }): Promise<string> {
+/** Menjalankan yt-dlp lewat child_process (tanpa shell). stderr ikut dikembalikan (berisi WARNING penting). */
+export async function runYtDlp(args: string[], opt: { timeout: number; maxBuffer: number }): Promise<{ stdout: string; stderr: string }> {
   const bin = await ytdlpBinary();
-  const { stdout } = await run(bin, args, { timeout: opt.timeout, maxBuffer: opt.maxBuffer, windowsHide: true, env: childEnv() });
-  return String(stdout);
+  const { stdout, stderr } = await run(bin, args, { timeout: opt.timeout, maxBuffer: opt.maxBuffer, windowsHide: true, env: childEnv() });
+  return { stdout: String(stdout), stderr: String(stderr) };
 }
 
 let ffmpegCache: Promise<string | null> | undefined;

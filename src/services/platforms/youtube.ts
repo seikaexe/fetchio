@@ -3,11 +3,11 @@
   Telegram : t.me/seikagenou
   Mohon Untuk Tidak Menghapus, Mengedit, dll Watermark Di Dalam Kode Ini
 */
-import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { MediaFormat, MediaResult, ThumbnailInfo, encodeToken, UA } from "./tiktok";
 import { YtDlpUnavailable, ffmpegBinary, runYtDlp } from "../ytdlp";
+import { CookieConfigError, CookieSummary, describe, prepareCookies, redact } from "../ytcookies";
 
 /* =====================================================================
    YouTube — yt-dlp EKSTERNAL (tanpa API pihak ketiga, tanpa source yt-dlp di repo)
@@ -19,9 +19,10 @@ import { YtDlpUnavailable, ffmpegBinary, runYtDlp } from "../ytdlp";
    Env (semua opsional):
      YTDLP_PATH               path executable yt-dlp (default: `yt-dlp` di PATH)
      YTDLP_AUTO_DOWNLOAD      "0" = jangan unduh otomatis bila yt-dlp tidak ada
-     YTDLP_COOKIES_FILE       file cookies Netscape
-     YTDLP_COOKIES_BASE64     cookies Netscape dalam Base64 (untuk Environment Variables Vercel)
-     YOUTUBE_COOKIES          isi cookies Netscape biasa (alternatif)
+     YTDLP_COOKIES_FILE       file cookies (Netscape / JSON Cookie-Editor / header string)
+     YTDLP_COOKIES_BASE64     isi cookies dalam Base64 (untuk Environment Variables Vercel)
+     YOUTUBE_COOKIES          isi cookies biasa (alternatif)
+     YTDLP_PLAYER_CLIENT      opsional, mis. "tv,web_safari" (extractor-args youtube:player_client)
      YTDLP_PROXY              mis. http://user:pass@host:port (berguna kalau IP server diblokir YouTube)
      YTDLP_REMOTE_COMPONENTS  mis. "ejs:github" - hanya perlu jika yt-dlp BUKAN executable resmi
                               (executable resmi sudah membawa yt-dlp-ejs)
@@ -69,33 +70,11 @@ const hasV = (f: any) => !!f?.vcodec && f.vcodec !== "none";
 const hasA = (f: any) => !!f?.acodec && f.acodec !== "none";
 
 /* ---------- menjalankan yt-dlp ---------- */
-let cookieFile: string | undefined;
 let cacheDir: string | undefined;
 
-function cookiesArgs(): string[] {
-  // File path (mis. Secret File di hosting) memiliki prioritas tertinggi.
-  const filePath = process.env.YTDLP_COOKIES_FILE?.trim();
-  if (filePath) return ["--cookies", filePath];
-
-  // Vercel: simpan isi cookies Netscape sebagai Base64 di Environment Variables.
-  // File dibuat di /tmp (tmpdir pada Vercel) dan tidak pernah masuk repository.
-  const encoded = process.env.YTDLP_COOKIES_BASE64?.trim();
-  const raw = encoded
-    ? Buffer.from(encoded, "base64").toString("utf8")
-    : process.env.YOUTUBE_COOKIES;
-  if (raw && raw.trim()) {
-    if (!cookieFile) {
-      const contents = raw.replace(/\\n/g, "\n");
-      if (!contents.includes("# Netscape HTTP Cookie File") && !contents.includes("# HTTP Cookie File")) {
-        throw new Error("Cookies YouTube harus menggunakan format Netscape cookies.txt");
-      }
-      const file = join(mkdtempSync(join(tmpdir(), "fetchio-")), "youtube-cookies.txt");
-      writeFileSync(file, contents, { mode: 0o600 });
-      cookieFile = file;
-    }
-    return ["--cookies", cookieFile as string];
-  }
-  return [];
+function cookiesArgs(): { args: string[]; summary?: CookieSummary } {
+  const c = prepareCookies();            // melempar CookieConfigError bila cookies salah konfigurasi
+  return c ? { args: ["--cookies", c.file], summary: c.summary } : { args: [] };
 }
 
 /** batasi proses yt-dlp yang jalan bersamaan supaya server tidak kewalahan */
@@ -107,15 +86,22 @@ async function slot<T>(fn: () => Promise<T>): Promise<T> {
   try { return await fn(); } finally { active--; }
 }
 
-function friendly(err: any): Error {
+function friendly(err: any, cookies?: CookieSummary): Error {
+  if (err instanceof YtDlpUnavailable || err instanceof CookieConfigError) return err;
   const out = String(err?.stderr ?? "") + " " + String(err?.message ?? "");
-  if (err instanceof YtDlpUnavailable) return err;
+  // penyebab sebenarnya dicatat di log server (tanpa nilai cookie)
+  console.error("[yt-dlp]", err?.code ?? "", redact(out).slice(-1500).replace(/\s+/g, " "));
   if (err?.code === "ENOENT" || err?.code === "EACCES") return new Error("yt-dlp tidak ditemukan atau tidak bisa dijalankan di server");
   if (err?.killed || err?.signal === "SIGTERM") return new Error("Pengambilan data YouTube terlalu lama, coba lagi");
-  if (/confirm you.?re not a bot|sign in to confirm/i.test(out)) return new Error("YouTube meminta verifikasi dari server ini. Atur cookies (YTDLP_COOKIES_FILE) atau proxy (YTDLP_PROXY)");
+  if (/cookies are no longer valid|likely been rotated/i.test(out))
+    return new Error("Cookies YouTube sudah tidak valid (dirotasi YouTube). Ekspor ulang lewat jendela incognito: login, buka youtube.com/robots.txt, ekspor, lalu tutup jendelanya");
+  if (/confirm your age|age.restricted|inappropriate for some users/i.test(out)) return new Error(cookies ? "Video dibatasi usia dan akun pada cookies belum bisa mengaksesnya" : "Video dibatasi usia dan butuh login (atur cookies)");
+  if (/confirm you.?re not a bot|sign in to confirm/i.test(out))
+    return new Error(cookies
+      ? `YouTube tetap meminta verifikasi walau cookies dipakai (${cookies.youtube} cookie, login ${cookies.loggedIn ? "terdeteksi" : "tidak terdeteksi"}). Biasanya IP server (datacenter) ditandai atau sesi cookies sudah dirotasi: pakai proxy residensial (YTDLP_PROXY) dan ekspor ulang cookies dari incognito`
+      : "YouTube meminta verifikasi dari server ini dan tidak ada cookies yang terpasang. Atur cookies (YTDLP_COOKIES_FILE / YTDLP_COOKIES_BASE64) atau proxy (YTDLP_PROXY)");
   if (/private video/i.test(out)) return new Error("Video ini privat");
   if (/members.only|join this channel/i.test(out)) return new Error("Video ini khusus anggota channel");
-  if (/age|confirm your age|inappropriate/i.test(out) && /sign in|restricted/i.test(out)) return new Error("Video dibatasi usia dan butuh login (atur cookies)");
   if (/not available in your country|blocked it in your country|geo/i.test(out)) return new Error("Video tidak tersedia di wilayah server");
   if (/video unavailable|has been removed|no longer available|does not exist|terminated/i.test(out)) return new Error("Video tidak tersedia atau sudah dihapus");
   if (/live event will begin|premieres in|is upcoming/i.test(out)) return new Error("Siaran langsung/premiere ini belum dimulai");
@@ -125,23 +111,49 @@ function friendly(err: any): Error {
   return new Error("Gagal mengambil data video dari YouTube");
 }
 
-async function ytdlpJson(id: string): Promise<any> {
+function ytdlpArgs(id: string, extra: string[] = []): { args: string[]; cookies?: CookieSummary } {
   cacheDir ??= join(tmpdir(), "fetchio-ytdlp-cache");
   const remote = process.env.YTDLP_REMOTE_COMPONENTS;
-  const args = [
-    "-J", "--no-playlist", "--no-warnings", "--no-update", "--ignore-config",
-    "--socket-timeout", "20", "--cache-dir", cacheDir,
-    "--js-runtimes", `node:${process.execPath}`,
-    ...(remote && remote !== "0" ? ["--remote-components", remote] : []),
-    ...(process.env.YTDLP_PROXY ? ["--proxy", process.env.YTDLP_PROXY] : []),
-    ...cookiesArgs(),
-    "--", `https://www.youtube.com/watch?v=${id}`,       // URL dibangun ulang dari ID tervalidasi, tanpa shell
-  ];
+  const client = process.env.YTDLP_PLAYER_CLIENT?.trim();
+  const ck = cookiesArgs();
+  return {
+    cookies: ck.summary,
+    args: [
+      "-J", "--no-playlist", "--no-update", "--ignore-config", ...extra,        // tanpa --no-warnings: WARNING soal cookies harus terlihat
+      "--socket-timeout", "20", "--cache-dir", cacheDir,
+      "--js-runtimes", `node:${process.execPath}`,
+      ...(remote && remote !== "0" ? ["--remote-components", remote] : []),
+      ...(client && /^[\w,.-]+$/.test(client) ? ["--extractor-args", `youtube:player_client=${client}`] : []),
+      ...(process.env.YTDLP_PROXY ? ["--proxy", process.env.YTDLP_PROXY] : []),
+      ...ck.args,
+      "--", `https://www.youtube.com/watch?v=${id}`,       // URL dibangun ulang dari ID tervalidasi, tanpa shell
+    ],
+  };
+}
+
+async function ytdlpJson(id: string): Promise<any> {
+  let built: ReturnType<typeof ytdlpArgs>;
+  try { built = ytdlpArgs(id); } catch (e) { throw friendly(e); }
+  const { args, cookies } = built;
   return slot(async () => {
     try {
-      return JSON.parse(await runYtDlp(args, { timeout: TIMEOUT, maxBuffer: 96 * 1024 * 1024 }));
-    } catch (e) { throw friendly(e); }
+      const { stdout, stderr } = await runYtDlp(args, { timeout: TIMEOUT, maxBuffer: 96 * 1024 * 1024 });
+      if (/cookies are no longer valid|likely been rotated/i.test(stderr)) console.error("[yt-dlp] PERINGATAN: cookies sudah dirotasi YouTube, ekspor ulang");
+      return JSON.parse(stdout);
+    } catch (e) { throw friendly(e, cookies); }
   });
+}
+
+/** Untuk `npm run ytdlp:check`: menjalankan yt-dlp apa adanya dan mengembalikan ringkasan + stderr (tanpa nilai cookie). */
+export async function diagnoseYouTube(id = "dQw4w9WgXcQ"): Promise<{ cookies: string; ok: boolean; stderr: string }> {
+  let built: ReturnType<typeof ytdlpArgs>;
+  try { built = ytdlpArgs(id, ["-v"]); } catch (e: any) { return { cookies: String(e?.message ?? e), ok: false, stderr: "" }; }
+  try {
+    const { stderr } = await runYtDlp(built.args, { timeout: TIMEOUT, maxBuffer: 96 * 1024 * 1024 });
+    return { cookies: describe(built.cookies), ok: true, stderr: redact(stderr) };
+  } catch (e: any) {
+    return { cookies: describe(built.cookies), ok: false, stderr: redact(String(e?.stderr ?? e?.message ?? e)) };
+  }
 }
 
 /* ---------- ubah JSON yt-dlp -> hasil Fetchio ---------- */
